@@ -90,17 +90,19 @@ exports.get_logs = (req, res) => {
   const toRaw = req.query.to;
   const limitRaw = req.query.limit;
 
-  let sql =
-    "SELECT description, duration, date FROM exercises WHERE user_id = ?";
+  let where = "user_id = ?";
   const params = [userId];
+  const countParams = [userId];
 
   if (fromRaw) {
     const fromDate = fromRaw instanceof Date ? fromRaw : new Date(fromRaw);
     if (isNaN(fromDate.getTime())) {
       return res.status(400).json({ error: "Invalid 'from' date" });
     }
-    sql += " AND date >= ?";
-    params.push(fromDate.toISOString().split("T")[0]);
+    where += " AND date >= ?";
+    const iso = fromDate.toISOString().split("T")[0];
+    params.push(iso);
+    countParams.push(iso);
   }
 
   if (toRaw) {
@@ -108,36 +110,49 @@ exports.get_logs = (req, res) => {
     if (isNaN(toDate.getTime())) {
       return res.status(400).json({ error: "Invalid 'to' date" });
     }
-    sql += " AND date <= ?";
-    params.push(toDate.toISOString().split("T")[0]);
+    where += " AND date <= ?";
+    const iso = toDate.toISOString().split("T")[0];
+    params.push(iso);
+    countParams.push(iso);
   }
 
-  sql += " ORDER BY date";
+  const countSql = `SELECT COUNT(*) AS count FROM exercises WHERE ${where}`;
 
-  if (limitRaw) {
-    const limit = parseInt(limitRaw, 10);
-    if (isNaN(limit) || limit <= 0) {
-      return res.status(400).json({ error: "Invalid 'limit'" });
-    }
-    sql += " LIMIT ?";
-    params.push(limit);
-  }
-
-  db.all(sql, params, (err, rows) => {
+  db.get(countSql, countParams, (err, countRow) => {
     if (err) {
       return res.status(500).json({ error: "Database error" });
     }
 
-    const log = rows.map((row) => ({
-      description: row.description,
-      duration: row.duration,
-      date: new Date(row.date).toDateString(),
-    }));
+    const totalCount = (countRow && countRow.count) || 0;
 
-    res.json({
-      _id: userId,
-      log: log,
-      count: log.length,
+    let sql = `SELECT description, duration, date FROM exercises WHERE ${where} ORDER BY date`;
+    const dataParams = params.slice();
+
+    if (limitRaw) {
+      const limit = parseInt(limitRaw, 10);
+      if (isNaN(limit) || limit <= 0) {
+        return res.status(400).json({ error: "Invalid 'limit'" });
+      }
+      sql += " LIMIT ?";
+      dataParams.push(limit);
+    }
+
+    db.all(sql, dataParams, (err, rows) => {
+      if (err) {
+        return res.status(500).json({ error: "Database error" });
+      }
+
+      const log = rows.map((row) => ({
+        description: row.description,
+        duration: row.duration,
+        date: new Date(row.date).toDateString(),
+      }));
+
+      res.json({
+        _id: userId,
+        log: log,
+        count: totalCount,
+      });
     });
   });
 };
